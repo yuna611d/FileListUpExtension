@@ -1,0 +1,46 @@
+{
+    "name": "filelistupextension",
+    "displayName": "FileListUpExtension",
+    "description": "List up file names and file paths.",
+    "version": "0.1.0",
+    "publisher": "yuna611d",
+    "engines": {
+        "vscode": "^1.25.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onCommand:extension.listUpFileNameAndPath"
+    ],
+    "main": "./out/extension",
+    "contributes": {
+        "commands": [
+            {
+                "command": "extension.listUpFileNameAndPath",
+                "title": "List up file name and file path"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "postinstall": "node ./node_modules/vscode/bin/install",
+        "test": "npm run compile && node ./node_modules/vscode/bin/test"
+    },
+    "devDependencies": {
+        "typescript": "^2.6.1",
+        "vscode": "^1.1.6",
+        "tslint": "^5.8.0",
+        "@types/node": "^7.0.43",
+        "@types/mocha": "^2.2.42"
+    },
+    "dependencies": {
+        "jshint": "^2.9.5"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/yuna611d/FileListUpExtension.git"
+    }
+}
