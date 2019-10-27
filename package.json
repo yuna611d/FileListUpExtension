@@ -2,7 +2,7 @@
     "name": "filelistupextension",
     "displayName": "FileListUpExtension",
     "description": "List up file names and file paths.",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "publisher": "yuna611d",
     "engines": {
         "vscode": "^1.25.0"
