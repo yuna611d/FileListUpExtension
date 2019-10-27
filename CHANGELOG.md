@@ -1,6 +1,6 @@
 # Change Log
 
-## 0.1.2
+## 0.1.2 and 0.1.3
 
 - Fix internal problem
 
