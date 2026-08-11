@@ -48,10 +48,15 @@ suite("Extension Tests", function () {
             fs.symlinkSync(root, path.join(root, "sub", "loop"), "dir");
             fs.symlinkSync(path.join(root, "plain.txt"), path.join(root, "link.txt"), "file");
             fs.symlinkSync(path.join(root, "missing"), path.join(root, "broken"), "file");
-        } catch (err) {
+        } catch {
             // Creating symlinks needs elevated privileges on Windows.
             symlinksSupported = false;
         }
+    });
+
+    suiteTeardown(function () {
+        // rm() removes the symlinks themselves, not what they point at.
+        fs.rmSync(root, { recursive: true, force: true });
     });
 
     suite("getFormatedText", function () {
@@ -59,23 +64,23 @@ suite("Extension Tests", function () {
         const service = new FileInfoService();
 
         test("joins plain values with a comma", function () {
-            assert.equal(service.getFormatedText(["FileName", "FilePath"]), "FileName,FilePath");
+            assert.strictEqual(service.getFormatedText(["FileName", "FilePath"]), "FileName,FilePath");
         });
 
         test("quotes a value containing a comma", function () {
-            assert.equal(service.getFormatedText(["a,b", "/tmp/"]), '"a,b",/tmp/');
+            assert.strictEqual(service.getFormatedText(["a,b", "/tmp/"]), '"a,b",/tmp/');
         });
 
         test("quotes a value containing a line break", function () {
-            assert.equal(service.getFormatedText(["a\nb"]), '"a\nb"');
+            assert.strictEqual(service.getFormatedText(["a\nb"]), '"a\nb"');
         });
 
         test("quotes and doubles an embedded double quote", function () {
-            assert.equal(service.getFormatedText(['a"b']), '"a""b"');
+            assert.strictEqual(service.getFormatedText(['a"b']), '"a""b"');
         });
 
         test("leaves a value without special characters unquoted", function () {
-            assert.equal(service.getFormatedText(["readme.md"]), "readme.md");
+            assert.strictEqual(service.getFormatedText(["readme.md"]), "readme.md");
         });
     });
 
@@ -84,12 +89,12 @@ suite("Extension Tests", function () {
         const service = new FileInfoService();
 
         test("appends the platform separator", function () {
-            assert.equal(service.getTargetDir(path.join(path.sep, "a", "b")), path.join(path.sep, "a", "b") + path.sep);
+            assert.strictEqual(service.getTargetDir(path.join(path.sep, "a", "b")), path.join(path.sep, "a", "b") + path.sep);
         });
 
         test("does not append a second separator", function () {
             const withSeparator = path.join(path.sep, "a", "b") + path.sep;
-            assert.equal(service.getTargetDir(withSeparator), withSeparator);
+            assert.strictEqual(service.getTargetDir(withSeparator), withSeparator);
         });
     });
 
@@ -98,11 +103,11 @@ suite("Extension Tests", function () {
         test("finds every file in the tree exactly once", async function () {
             const result = await collect(root);
 
-            assert.equal(result.cancelled, false);
+            assert.strictEqual(result.cancelled, false);
             const expected = symlinksSupported
                 ? ["deepest.txt", "link.txt", "nested.txt", "plain.txt"]
                 : ["deepest.txt", "nested.txt", "plain.txt"];
-            assert.deepEqual(fileNames(result.files), expected);
+            assert.deepStrictEqual(fileNames(result.files), expected);
         });
 
         test("terminates on a symlink loop", async function () {
@@ -113,22 +118,22 @@ suite("Extension Tests", function () {
             const result = await collect(root);
 
             const looped = result.files.filter(file => file.directory.indexOf("loop") !== -1);
-            assert.deepEqual(looped, [], "files below the symlink loop must not be reported");
+            assert.deepStrictEqual(looped, [], "files below the symlink loop must not be reported");
         });
 
         test("reports a directory that cannot be read instead of throwing", async function () {
             const result = await collect(path.join(root, "does-not-exist"));
 
-            assert.equal(result.cancelled, false);
-            assert.deepEqual(result.files, []);
-            assert.equal(result.unreadableDirectoryCount, 1);
+            assert.strictEqual(result.cancelled, false);
+            assert.deepStrictEqual(result.files, []);
+            assert.strictEqual(result.unreadableDirectoryCount, 1);
         });
 
         test("returns an empty result for an empty directory", async function () {
             const result = await collect(path.join(root, "empty"));
 
-            assert.deepEqual(result.files, []);
-            assert.equal(result.unreadableDirectoryCount, 0);
+            assert.deepStrictEqual(result.files, []);
+            assert.strictEqual(result.unreadableDirectoryCount, 0);
         });
 
         test("stops when cancellation is requested", async function () {
@@ -137,8 +142,8 @@ suite("Extension Tests", function () {
 
             const result = await collect(root, source.token);
 
-            assert.equal(result.cancelled, true);
-            assert.deepEqual(result.files, []);
+            assert.strictEqual(result.cancelled, true);
+            assert.deepStrictEqual(result.files, []);
         });
     });
 });
