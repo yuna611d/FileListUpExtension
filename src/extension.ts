@@ -6,6 +6,15 @@ import { Dirent } from 'fs';
 import { readdir, realpath, stat } from 'fs/promises';
 import * as path from 'path';
 
+/** Command contributed to the palette. */
+const COMMAND_ID = 'fileListUp.listUpFileNameAndPath';
+/** Pre-0.2.0 command id, kept so existing user keybindings keep working. */
+const LEGACY_COMMAND_ID = 'extension.listUpFileNameAndPath';
+
+const CONFIGURATION_SECTION = 'fileListUp';
+const EXCLUDE_DIRECTORIES_SETTING = 'excludeDirectories';
+const DEFAULT_EXCLUDED_DIRECTORIES = ["node_modules", ".git", ".svn", ".hg"];
+
 /** A single file discovered during the search. */
 export interface FileInfo {
     fileName: string;
@@ -21,10 +30,20 @@ export interface SearchResult {
     cancelled: boolean;
 }
 
-/** A directory queued for walking, paired with its resolved real path. */
+/** Knobs for a single walk. */
+export interface SearchOptions {
+    /** Directory names never descended into, matched exactly against the entry name. */
+    excludeDirectories: ReadonlySet<string>;
+}
+
+/**
+ * A directory queued for walking. `parent` forms the chain back to the search
+ * root, which is what makes symlink cycles detectable.
+ */
 interface PendingDirectory {
     dir: string;
     realPath: string;
+    parent?: PendingDirectory;
 }
 
 // this method is called when your extension is activated
@@ -32,12 +51,12 @@ interface PendingDirectory {
 export function activate(context: vscode.ExtensionContext) {
     console.log("File List Search is activated");
 
-    const disposable = vscode.commands.registerCommand('extension.listUpFileNameAndPath', () => {
-        const service = new FileInfoService();
-        return service.doService();
-    });
+    const run = () => new FileInfoService().doService();
 
-    context.subscriptions.push(disposable);
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMAND_ID, run),
+        vscode.commands.registerCommand(LEGACY_COMMAND_ID, run),
+    );
 }
 
 // this method is called when your extension is deactivated
@@ -46,21 +65,6 @@ export function deactivate() {}
 export class FileInfoService {
 
     private static readonly HEADER: string[] = ["FileName", "FilePath"];
-
-    private searchPathInputBoxOptions: vscode.InputBoxOptions = {
-        prompt: "Input search path (absolute path)",
-        ignoreFocusOut: true,
-        validateInput: (value: string) => {
-            const trimmed = value.trim();
-            if (trimmed.length === 0) {
-                return "Please input a search path.";
-            }
-            if (!path.isAbsolute(trimmed)) {
-                return "Please input an absolute path.";
-            }
-            return undefined;
-        },
-    };
 
     public async doService(): Promise<void> {
         // Capture the editor before the input box opens so the listing always lands
@@ -71,7 +75,7 @@ export class FileInfoService {
             return;
         }
 
-        const value = await vscode.window.showInputBox(this.searchPathInputBoxOptions);
+        const value = await this.promptForSearchPath();
         if (value === undefined) {
             // The user dismissed the input box.
             return;
@@ -85,11 +89,13 @@ export class FileInfoService {
             return;
         }
 
+        const options: SearchOptions = { excludeDirectories: this.readExcludedDirectories() };
+
         const result = await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: `Listing up files in ${targetDir}`,
             cancellable: true,
-        }, (progress, token) => this.collectFileList(targetDir, progress, token));
+        }, (progress, token) => this.collectFileList(targetDir, options, progress, token));
 
         if (result.cancelled) {
             vscode.window.showInformationMessage("Listing up files was cancelled.");
@@ -108,6 +114,81 @@ export class FileInfoService {
         }
     }
 
+    /** Directory names the user has excluded from the search. */
+    private readExcludedDirectories(): ReadonlySet<string> {
+        const configured = vscode.workspace
+            .getConfiguration(CONFIGURATION_SECTION)
+            .get<string[]>(EXCLUDE_DIRECTORIES_SETTING, DEFAULT_EXCLUDED_DIRECTORIES);
+        return new Set(configured);
+    }
+
+    /**
+     * Asks for the directory to search. The path can be typed, or picked with the
+     * folder button, which is a good deal less work than typing an absolute path.
+     */
+    protected promptForSearchPath(): Promise<string | undefined> {
+        return new Promise<string | undefined>(resolve => {
+            const input = vscode.window.createInputBox();
+            input.title = "List up file name and file path";
+            input.prompt = "Input search path (absolute path)";
+            input.value = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+            input.ignoreFocusOut = true;
+            input.buttons = [{
+                iconPath: new vscode.ThemeIcon("folder-opened"),
+                tooltip: "Select a folder...",
+            }];
+
+            let accepted: string | undefined;
+
+            const validate = (value: string) => {
+                const trimmed = value.trim();
+                if (trimmed.length === 0) {
+                    return "Please input a search path.";
+                }
+                if (!path.isAbsolute(trimmed)) {
+                    return "Please input an absolute path.";
+                }
+                return undefined;
+            };
+
+            input.onDidChangeValue(value => {
+                input.validationMessage = validate(value);
+            });
+
+            input.onDidTriggerButton(async () => {
+                const picked = await vscode.window.showOpenDialog({
+                    canSelectFiles: false,
+                    canSelectFolders: true,
+                    canSelectMany: false,
+                    openLabel: "List up files here",
+                    defaultUri: input.value.length > 0 ? vscode.Uri.file(input.value) : undefined,
+                });
+                if (picked !== undefined && picked.length > 0) {
+                    input.value = picked[0].fsPath;
+                    input.validationMessage = validate(input.value);
+                }
+            });
+
+            input.onDidAccept(() => {
+                const message = validate(input.value);
+                if (message !== undefined) {
+                    input.validationMessage = message;
+                    return;
+                }
+                accepted = input.value;
+                input.hide();
+            });
+
+            // hide() fires onDidHide, so this is the single place the promise settles.
+            input.onDidHide(() => {
+                resolve(accepted);
+                input.dispose();
+            });
+
+            input.show();
+        });
+    }
+
     /**
      * Walks `rootDir` depth first and collects every file underneath it.
      *
@@ -117,6 +198,7 @@ export class FileInfoService {
      */
     public async collectFileList(
         rootDir: string,
+        options: SearchOptions,
         progress: vscode.Progress<{ message?: string }>,
         token: vscode.CancellationToken,
     ): Promise<SearchResult> {
@@ -129,9 +211,6 @@ export class FileInfoService {
             return { files, unreadableDirectoryCount: 1, cancelled: false };
         }
 
-        // Real paths of every directory already entered. Following a symlink that
-        // points back at an ancestor would otherwise loop forever.
-        const visitedRealPaths = new Set<string>([rootRealPath]);
         const stack: PendingDirectory[] = [{ dir: rootDir, realPath: rootRealPath }];
 
         while (stack.length > 0) {
@@ -161,14 +240,18 @@ export class FileInfoService {
                 if (entry.isFile()) {
                     files.push({ fileName: entry.name, directory: current.dir });
                 } else if (entry.isDirectory()) {
+                    if (options.excludeDirectories.has(entry.name)) {
+                        continue;
+                    }
                     // A real directory cannot introduce a cycle, so its real path is
                     // simply the parent's real path plus the entry name.
                     subDirectories.push({
                         dir: path.join(current.dir, entry.name),
                         realPath: path.join(current.realPath, entry.name),
+                        parent: current,
                     });
                 } else if (entry.isSymbolicLink()) {
-                    const target = await this.resolveSymbolicLink(entry.name, current.dir, files);
+                    const target = await this.resolveSymbolicLink(entry.name, current, files, options);
                     if (target !== undefined) {
                         subDirectories.push(target);
                     }
@@ -178,15 +261,26 @@ export class FileInfoService {
             // Pushed in reverse so that popping yields the sorted order.
             for (let i = subDirectories.length - 1; i >= 0; i--) {
                 const subDirectory = subDirectories[i];
-                if (visitedRealPaths.has(subDirectory.realPath)) {
+                // Skipping only ancestors stops cycles without hiding a directory
+                // that is legitimately reachable through two different links.
+                if (this.isOnAncestorChain(current, subDirectory.realPath)) {
                     continue;
                 }
-                visitedRealPaths.add(subDirectory.realPath);
                 stack.push(subDirectory);
             }
         }
 
         return { files, unreadableDirectoryCount, cancelled: false };
+    }
+
+    /** True when `realPath` is the directory itself or one of its ancestors. */
+    private isOnAncestorChain(directory: PendingDirectory | undefined, realPath: string): boolean {
+        for (let node = directory; node !== undefined; node = node.parent) {
+            if (node.realPath === realPath) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -195,11 +289,12 @@ export class FileInfoService {
      */
     private async resolveSymbolicLink(
         entryName: string,
-        parentDir: string,
+        parent: PendingDirectory,
         files: FileInfo[],
+        options: SearchOptions,
     ): Promise<PendingDirectory | undefined> {
 
-        const entryPath = path.join(parentDir, entryName);
+        const entryPath = path.join(parent.dir, entryName);
 
         const resolved = await this.tryStat(entryPath);
         if (resolved === undefined) {
@@ -207,10 +302,10 @@ export class FileInfoService {
             return undefined;
         }
         if (resolved.isFile()) {
-            files.push({ fileName: entryName, directory: parentDir });
+            files.push({ fileName: entryName, directory: parent.dir });
             return undefined;
         }
-        if (!resolved.isDirectory()) {
+        if (!resolved.isDirectory() || options.excludeDirectories.has(entryName)) {
             return undefined;
         }
 
@@ -218,11 +313,11 @@ export class FileInfoService {
         if (realPath === undefined) {
             return undefined;
         }
-        return { dir: entryPath, realPath };
+        return { dir: entryPath, realPath, parent };
     }
 
     /** Inserts the collected file list into the editor as CSV. */
-    private async writeFileList(editor: vscode.TextEditor, files: FileInfo[]): Promise<void> {
+    public async writeFileList(editor: vscode.TextEditor, files: FileInfo[]): Promise<void> {
         const eol = editor.document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
 
         const lines = [this.getFormatedText(FileInfoService.HEADER)];
