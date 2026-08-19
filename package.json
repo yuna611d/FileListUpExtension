@@ -2,23 +2,52 @@
     "name": "filelistupextension",
     "displayName": "FileListUpExtension",
     "description": "List up file names and file paths.",
-    "version": "0.1.3",
+    "version": "0.2.0",
     "publisher": "yuna611d",
+    "license": "MIT",
+    "keywords": [
+        "file",
+        "list",
+        "csv",
+        "path",
+        "directory"
+    ],
     "engines": {
         "vscode": "^1.90.0"
     },
     "categories": [
         "Other"
     ],
-    "activationEvents": [],
+    "activationEvents": [
+        "onCommand:extension.listUpFileNameAndPath"
+    ],
     "main": "./out/extension",
     "contributes": {
         "commands": [
             {
-                "command": "extension.listUpFileNameAndPath",
+                "command": "fileListUp.listUpFileNameAndPath",
+                "category": "File List Up",
                 "title": "List up file name and file path"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "FileListUpExtension",
+            "properties": {
+                "fileListUp.excludeDirectories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "node_modules",
+                        ".git",
+                        ".svn",
+                        ".hg"
+                    ],
+                    "markdownDescription": "Directory names that are never descended into. Matched exactly against the directory name, not as a glob."
+                }
+            }
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
@@ -33,14 +62,15 @@
         "@types/mocha": "^10.0.10",
         "@types/node": "^20.17.6",
         "@types/vscode": "^1.90.0",
-        "@vscode/test-cli": "^0.0.10",
-        "@vscode/test-electron": "^2.4.1",
+        "@vscode/test-cli": "^0.0.15",
+        "@vscode/test-electron": "^3.1.0",
         "eslint": "^9.15.0",
         "typescript": "^5.6.3",
         "typescript-eslint": "^8.15.0"
     },
     "overrides": {
-        "serialize-javascript": "^7.1.0"
+        "serialize-javascript": "^7.1.0",
+        "diff": "^8.0.3"
     },
     "repository": {
         "type": "git",

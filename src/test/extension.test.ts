@@ -10,20 +10,24 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { FileInfo, FileInfoService } from '../extension';
+import { FileInfo, FileInfoService, SearchOptions } from '../extension';
 
 const noProgress: vscode.Progress<{ message?: string }> = { report: () => { /* nothing to do */ } };
 
-function collect(rootDir: string, token?: vscode.CancellationToken) {
-    let cancellationToken = token;
-    if (cancellationToken === undefined) {
-        cancellationToken = new vscode.CancellationTokenSource().token;
-    }
-    return new FileInfoService().collectFileList(rootDir, noProgress, cancellationToken);
+function collect(rootDir: string, options?: Partial<SearchOptions>, token?: vscode.CancellationToken) {
+    const searchOptions: SearchOptions = {
+        excludeDirectories: options?.excludeDirectories ?? new Set<string>(),
+    };
+    const cancellationToken = token ?? new vscode.CancellationTokenSource().token;
+    return new FileInfoService().collectFileList(rootDir, searchOptions, noProgress, cancellationToken);
 }
 
 function fileNames(files: FileInfo[]): string[] {
     return files.map(file => file.fileName).sort();
+}
+
+function makeTempDir(): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), "filelistup-test-"));
 }
 
 // Defines a Mocha test suite to group tests of similar kind together
@@ -33,7 +37,7 @@ suite("Extension Tests", function () {
     let symlinksSupported = true;
 
     suiteSetup(function () {
-        root = fs.mkdtempSync(path.join(os.tmpdir(), "filelistup-test-"));
+        root = makeTempDir();
 
         fs.mkdirSync(path.join(root, "sub"));
         fs.mkdirSync(path.join(root, "sub", "deep"));
@@ -100,7 +104,7 @@ suite("Extension Tests", function () {
 
     suite("collectFileList", function () {
 
-        test("finds every file in the tree exactly once", async function () {
+        test("finds every file in the tree", async function () {
             const result = await collect(root);
 
             assert.strictEqual(result.cancelled, false);
@@ -119,6 +123,13 @@ suite("Extension Tests", function () {
 
             const looped = result.files.filter(file => file.directory.indexOf("loop") !== -1);
             assert.deepStrictEqual(looped, [], "files below the symlink loop must not be reported");
+        });
+
+        test("does not descend into an excluded directory name", async function () {
+            const result = await collect(root, { excludeDirectories: new Set(["sub"]) });
+
+            const expected = symlinksSupported ? ["link.txt", "plain.txt"] : ["plain.txt"];
+            assert.deepStrictEqual(fileNames(result.files), expected);
         });
 
         test("reports a directory that cannot be read instead of throwing", async function () {
@@ -140,10 +151,92 @@ suite("Extension Tests", function () {
             const source = new vscode.CancellationTokenSource();
             source.cancel();
 
-            const result = await collect(root, source.token);
+            const result = await collect(root, undefined, source.token);
 
             assert.strictEqual(result.cancelled, true);
             assert.deepStrictEqual(result.files, []);
+        });
+    });
+
+    suite("collectFileList with duplicated symlinks", function () {
+
+        let linkRoot: string;
+        let supported = true;
+
+        suiteSetup(function () {
+            linkRoot = makeTempDir();
+            fs.mkdirSync(path.join(linkRoot, "shared"));
+            fs.writeFileSync(path.join(linkRoot, "shared", "shared.txt"), "x");
+            try {
+                fs.symlinkSync(path.join(linkRoot, "shared"), path.join(linkRoot, "linkA"), "dir");
+                fs.symlinkSync(path.join(linkRoot, "shared"), path.join(linkRoot, "linkB"), "dir");
+            } catch {
+                supported = false;
+            }
+        });
+
+        suiteTeardown(function () {
+            fs.rmSync(linkRoot, { recursive: true, force: true });
+        });
+
+        test("lists a directory reached through two different links once per path", async function () {
+            if (!supported) {
+                this.skip();
+                return;
+            }
+            const result = await collect(linkRoot);
+
+            // Only ancestors are skipped, so neither link hides the other.
+            const directories = result.files.map(file => path.basename(file.directory)).sort();
+            assert.deepStrictEqual(directories, ["linkA", "linkB", "shared"]);
+        });
+    });
+
+    suite("writeFileList", function () {
+
+        const directory = path.join(path.sep, "a", "b");
+        const expectedPath = directory + path.sep;
+        const files: FileInfo[] = [
+            { fileName: "a.txt", directory },
+            { fileName: "b.txt", directory },
+        ];
+
+        teardown(async function () {
+            await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        });
+
+        test("does not interleave the listing with the existing lines", async function () {
+            const doc = await vscode.workspace.openTextDocument({ content: "first\nsecond\nthird\n" });
+            const editor = await vscode.window.showTextDocument(doc);
+            // Cursor at the start of the second line. The pre-0.2.0 implementation
+            // inserted each row at Position(n, 0), which scattered the listing
+            // between the lines already in the document.
+            const cursor = new vscode.Position(1, 0);
+            editor.selection = new vscode.Selection(cursor, cursor);
+
+            await new FileInfoService().writeFileList(editor, files);
+
+            assert.deepStrictEqual(editor.document.getText().split("\n"), [
+                "first",
+                "FileName,FilePath",
+                `a.txt,${expectedPath}`,
+                `b.txt,${expectedPath}`,
+                "second",
+                "third",
+                "",
+            ]);
+        });
+
+        test("uses the line ending of the document it writes into", async function () {
+            const doc = await vscode.workspace.openTextDocument({ content: "" });
+            const editor = await vscode.window.showTextDocument(doc);
+            await editor.edit(editBuilder => editBuilder.setEndOfLine(vscode.EndOfLine.CRLF));
+
+            await new FileInfoService().writeFileList(editor, [files[0]]);
+
+            assert.strictEqual(
+                editor.document.getText(),
+                `FileName,FilePath\r\na.txt,${expectedPath}\r\n`);
         });
     });
 });

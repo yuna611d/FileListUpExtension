@@ -1,6 +1,18 @@
 # Change Log
 
-## Unreleased
+## 0.2.0
+
+### Added
+
+- Add the `fileListUp.excludeDirectories` setting, which skips `node_modules`, `.git`, `.svn` and `.hg` by default. Searching a real project no longer produces tens of thousands of rows
+- Add a folder button to the search path prompt, and pre-fill it with the first workspace folder, so an absolute path no longer has to be typed by hand
+
+### Changed
+
+- Rename the command to `fileListUp.listUpFileNameAndPath`. The old `extension.listUpFileNameAndPath` id still works, so existing keybindings are unaffected
+- Skip a symbolic link only when it points at one of its own ancestors. Previously any directory already seen anywhere in the walk was skipped, so two different links to the same directory listed only one of them
+
+### Fixed
 
 - Fix the file list being interleaved with the existing text when the target document is not empty
 - Fix an endless walk when a symbolic link points back into the directory being searched
